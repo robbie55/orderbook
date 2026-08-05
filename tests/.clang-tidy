@@ -1,0 +1,8 @@
+# Test-body relaxations. GoogleTest's TEST macros and scenario-style bodies
+# legitimately trip these; they carry no signal for test code.
+InheritParentConfig: true
+Checks: >
+  -readability-function-cognitive-complexity,
+  -performance-inefficient-vector-operation,
+  -cppcoreguidelines-avoid-non-const-global-variables,
+  -cppcoreguidelines-owning-memory

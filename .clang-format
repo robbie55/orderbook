@@ -1,0 +1,11 @@
+# Placeholder — swap for the emulator repo's .clang-format to keep one house
+# style across projects. Kept minimal and stable here.
+---
+Language: Cpp
+BasedOnStyle: LLVM
+IndentWidth: 4
+ColumnLimit: 100
+PointerAlignment: Left
+AllowShortFunctionsOnASingleLine: InlineOnly
+AllowShortIfStatementsOnASingleLine: false
+SortIncludes: CaseSensitive

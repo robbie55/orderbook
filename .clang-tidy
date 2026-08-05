@@ -1,0 +1,26 @@
+# Lint gate mirrors the emulator's: bug-prone, performance, portability, and a
+# curated cppcoreguidelines/modernize set. CI runs this as a hard gate.
+Checks: >
+  -*,
+  bugprone-*,
+  performance-*,
+  portability-*,
+  modernize-*,
+  cppcoreguidelines-*,
+  readability-*,
+  -modernize-use-trailing-return-type,
+  -readability-magic-numbers,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -cppcoreguidelines-pro-type-reinterpret-cast,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  -cppcoreguidelines-owning-memory,
+  -readability-identifier-length,
+  -readability-redundant-inline-specifier,
+  -modernize-use-nodiscard,
+  -cppcoreguidelines-pro-type-union-access,
+  -cppcoreguidelines-avoid-c-arrays,
+  -modernize-avoid-c-arrays,
+  -hicpp-avoid-c-arrays
+WarningsAsErrors: '*'
+HeaderFilterRegex: 'include/ob/.*'
+FormatStyle: file
