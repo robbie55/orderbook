@@ -1,33 +1,19 @@
-#include <cstddef>
-
 #include <gtest/gtest.h>
 
-#include "book.hpp"
-#include "level.hpp"
-#include "order.hpp"
-#include "types.hpp"
+#include <cstddef>
 
 namespace {
+  TEST(Types, OppositeSide) {}
 
-using namespace ob;
+  TEST(PriceBand, IndexRoundTrips) {}
 
-TEST(Types, OppositeSide) {
-}
+  TEST(Order, FitsInOneCacheLine) {}
 
-TEST(PriceBand, IndexRoundTrips) {
-}
+  TEST(Level, PushBackMaintainsFifoAndAggregates) {}
 
-TEST(Order, FitsInOneCacheLine) {
-}
+  TEST(Level, UnlinkFromMiddleHeadAndTail) {}
 
-TEST(Level, PushBackMaintainsFifoAndAggregates) {
-}
+  // The reusable sink compiles and accumulates fills.
+  TEST(TradeBuf, EmitAndClear) {}
 
-TEST(Level, UnlinkFromMiddleHeadAndTail) {
-}
-
-// The reusable sink compiles and accumulates fills.
-TEST(TradeBuf, EmitAndClear) {
-}
-
-} // namespace
+}  // namespace
