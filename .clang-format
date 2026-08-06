@@ -1,11 +1,42 @@
-# Placeholder — swap for the emulator repo's .clang-format to keep one house
-# style across projects. Kept minimal and stable here.
 ---
-Language: Cpp
-BasedOnStyle: LLVM
-IndentWidth: 4
-ColumnLimit: 100
+Language:        Cpp
+BasedOnStyle:    Google
+Standard:        c++20
+
+NamespaceIndentation: All
+
+DerivePointerAlignment: false
 PointerAlignment: Left
-AllowShortFunctionsOnASingleLine: InlineOnly
-AllowShortIfStatementsOnASingleLine: false
-SortIncludes: CaseSensitive
+
+IndentWidth:     2
+TabWidth:        2
+UseTab:          Never
+
+ColumnLimit:     150
+
+SortIncludes:    true
+
+AlignAfterOpenBracket: Align
+# Disabled: aligning these creates churn in diffs when variables are added or renamed.
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignEscapedNewlines: Left
+AlignOperands:   Align
+AlignTrailingComments: true
+
+BreakBeforeBraces: Attach
+
+AllowAllArgumentsOnNextLine: true
+AllowAllParametersOfDeclarationOnNextLine: true
+BinPackArguments: true
+BinPackParameters: true
+
+AlwaysBreakTemplateDeclarations: Yes
+
+IndentCaseLabels: true
+
+FixNamespaceComments: true
+
+IndentRequiresClause: true
+BreakBeforeConceptDeclarations: true
+...
