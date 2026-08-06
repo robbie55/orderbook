@@ -1,11 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "order.hpp"
-#include "order_pool.hpp"
-
 namespace {
-
-  using namespace ob;
 
   TEST(OrderPool, AllocateReturnsAlignedStorage) {}
 
