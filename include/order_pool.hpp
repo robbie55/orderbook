@@ -69,11 +69,6 @@ class OrderPool {
     freeListHead_ = newHead;
   }
 
-  std::size_t inUse() {
-    ;
-    ;
-  }
-
  private:
   struct Node {
     Node* next{};
