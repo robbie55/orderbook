@@ -9,15 +9,15 @@ template <typename T, std::size_t BlockCount>
 class OrderPool {
  public:
   OrderPool()
-      : pool_(static_cast<std::byte*>(::operator new(POOL_SIZE, std::align_val_t{ALIGNMENT}))), freeListHead_(reinterpret_cast<void*>(pool_)) {
-    static_assert(BLOCK_SIZE % ALIGNMENT == 0, "block stride must preserve alignment");
+      : pool_(static_cast<std::byte*>(::operator new(kPoolSize, std::align_val_t{kAlignment}))), freeListHead_(reinterpret_cast<void*>(pool_)) {
+    static_assert(kBlockSize % kAlignment == 0, "block stride must preserve alignment");
 
     for (size_t i{}; i < BlockCount - 1; ++i) {
       // calc address of current block, in bytes
-      std::byte* curBytes{&pool_[i * BLOCK_SIZE]};
+      std::byte* curBytes{&pool_[i * kBlockSize]};
 
       // get next block
-      std::byte* nextBytes{&pool_[(i + 1) * BLOCK_SIZE]};
+      std::byte* nextBytes{&pool_[(i + 1) * kBlockSize]};
 
       // tell compiler to treat a group of bytes as a node
       Node* curNode{reinterpret_cast<Node*>(curBytes)};
@@ -30,7 +30,7 @@ class OrderPool {
     }
 
     // for final byte, write nullptr inside so we know its the end
-    std::byte* lastBytes{&pool_[(BlockCount - 1) * BLOCK_SIZE]};
+    std::byte* lastBytes{&pool_[(BlockCount - 1) * kBlockSize]};
     Node* lastNode{reinterpret_cast<Node*>(lastBytes)};
 
     lastNode->next = nullptr;
@@ -39,7 +39,7 @@ class OrderPool {
   ~OrderPool() {
     freeListHead_ = nullptr;
     // delete[] on aligned - operator new storage is undefined behaviour
-    ::operator delete(pool_, POOL_SIZE, std::align_val_t{ALIGNMENT});
+    ::operator delete(pool_, kPoolSize, std::align_val_t{kAlignment});
   }
 
   OrderPool(OrderPool const& other) = delete;
@@ -80,14 +80,14 @@ class OrderPool {
   };
 
   // A block must satisfy BOTH T's alignment and Node's (free blocks hold a Node*).
-  static constexpr std::size_t ALIGNMENT{std::max(alignof(T), alignof(Node))};
+  static constexpr std::size_t kAlignment{std::max(alignof(T), alignof(Node))};
 
-  // Widen for types smaller than a pointer, then round the stride up to ALIGNMENT
+  // Widen for types smaller than a pointer, then round the stride up to kAlignment
   // so every block lands on an aligned address.
-  static constexpr std::size_t MIN_BLOCK{std::max(sizeof(T), sizeof(Node))};
-  static constexpr std::size_t BLOCK_SIZE{(MIN_BLOCK + ALIGNMENT - 1) / ALIGNMENT * ALIGNMENT};
+  static constexpr std::size_t kMinBlock{std::max(sizeof(T), sizeof(Node))};
+  static constexpr std::size_t kBlockSize{(kMinBlock + kAlignment - 1) / kAlignment * kAlignment};
 
-  static constexpr std::size_t POOL_SIZE{BlockCount * BLOCK_SIZE};
+  static constexpr std::size_t kPoolSize{BlockCount * kBlockSize};
 
   std::byte* pool_{};
   void* freeListHead_{};
