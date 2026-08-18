@@ -21,12 +21,14 @@ if(OB_ASAN)
 endif()
 
 # --- Header-only library ----------------------------------------------------
+# Both roots are on the search path, so headers refer to each other by bare
+# name: `#include <level.hpp>` from src/, `#include <array_book.hpp>` from bench/.
 add_library(ob INTERFACE)
-target_include_directories(ob INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(ob INTERFACE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(ob INTERFACE ob_warnings ob_asan)
 
 enable_testing()
 add_subdirectory(tests)
-
-# Enabled at the benchmark stage (Week 4):
-# add_subdirectory(bench)
+add_subdirectory(bench)
