@@ -11,7 +11,7 @@
 // quotes in $0.01 increments, callers scale to ticks at the feed boundary.
 namespace ob {
 
-  using Price = std::int64_t;     // integer ticks; never floating point
+  using Price = std::uint64_t;    // integer ticks; never floating point
   using Qty = std::uint64_t;      // shares/contracts/lots
   using OrderId = std::uint64_t;  // exchange/session order reference
 
