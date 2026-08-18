@@ -11,9 +11,9 @@
 // quotes in $0.01 increments, callers scale to ticks at the feed boundary.
 namespace ob {
 
-  using Price = std::uint64_t;    // integer ticks; never floating point
-  using Qty = std::uint64_t;      // shares/contracts/lots
-  using OrderId = std::uint64_t;  // exchange/session order reference
+  using Price = std::int64_t;    // integer ticks; never floating point
+  using Qty = std::int64_t;      // shares/contracts/lots
+  using OrderId = std::int64_t;  // exchange/session order reference
 
   enum class Side : std::uint8_t { kBuy = 0, kSell = 1 };
   enum class OrderType : std::uint8_t { kLimit = 0, kMarket = 1, kIoc = 2, kFok = 3 };

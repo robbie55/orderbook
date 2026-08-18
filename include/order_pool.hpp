@@ -48,9 +48,9 @@ namespace ob {
     OrderPool(OrderPool&& other) = delete;
     OrderPool& operator=(OrderPool&& rhs) = delete;
 
-    std::uint32_t getIndex(T* p) const { return static_cast<std::uint32_t>(reinterpret_cast<Node*>(p) - pool_); }
+    std::int64_t getIndex(T* p) const { return static_cast<std::uint32_t>(reinterpret_cast<Node*>(p) - pool_); }
 
-    T* at(std::uint32_t index) const { return reinterpret_cast<T*>(pool_ + (index * kBlockSize)); }
+    T* at(std::int64_t index) const { return reinterpret_cast<T*>(pool_ + (index * kBlockSize)); }
 
     T* allocate() {
       // if we try to allocate when we're empty, throw
