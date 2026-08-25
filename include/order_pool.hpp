@@ -50,8 +50,8 @@ namespace ob {
     OrderPool& operator=(OrderPool&& rhs) = delete;
 
     std::size_t getIndex(T* p) const {
-      auto slab{(reinterpret_cast<std::byte*>(p) - pool_)};
-      return static_cast<std::size_t>(slab);
+      return static_cast<std::size_t>(
+          static_cast<std::size_t>(reinterpret_cast<std::byte*>(p) - pool_) / kBlockSize);
     }
 
     // T* = pool_ + iBS
