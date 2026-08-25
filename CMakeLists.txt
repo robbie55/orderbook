@@ -20,13 +20,21 @@ if(OB_ASAN)
     target_link_options(ob_asan INTERFACE -fsanitize=address,undefined)
 endif()
 
-# --- Header-only library ----------------------------------------------------
-# Both roots are on the search path, so headers refer to each other by bare
+# --- Core library -----------------------------------------------------------
+# include/ is header-only (value types, Level, OrderPool, the BookLike concept).
+# src/ holds the book implementations, also header-only (class templates defined
+# in their .hpp), so `ob` is an INTERFACE library: it carries include roots and
+# flags, and has nothing to compile.
+#
+# Both roots stay on the search path, so headers refer to each other by bare
 # name: `#include <level.hpp>` from src/, `#include <array_book.hpp>` from bench/.
 add_library(ob INTERFACE)
 target_include_directories(ob INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}/src)
+# INTERFACE so the warning set and the sanitizer flags reach tests/ and bench/;
+# ASan in particular must be enabled consistently across every executable that
+# links it.
 target_link_libraries(ob INTERFACE ob_warnings ob_asan)
 
 enable_testing()
