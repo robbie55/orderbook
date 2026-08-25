@@ -48,7 +48,7 @@ class ArrayBook {
 
   ~ArrayBook() = default;
 
-  void add(const ob::NewOrder& newOrder);
+  ob::OrderId add(const ob::NewOrder& newOrder);
 
   void cancel(ob::OrderId id);
 
@@ -151,11 +151,13 @@ ArrayBook<BlockCount>::ArrayBook(ob::PriceBand band)
       bestBidIdx_{band.size()} {}
 
 template <size_t BlockCount>
-void ArrayBook<BlockCount>::add(const ob::NewOrder& newOrder) {
+ob::OrderId ArrayBook<BlockCount>::add(const ob::NewOrder& newOrder) {
   // TODO: unconditional link for now, needs matching
   ob::Order* o{buildOrder(newOrder)};
   auto idx{idxOf(o->price)};
   link(o, idx);
+
+  return o->id;
 }
 
 template <size_t BlockCount>

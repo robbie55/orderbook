@@ -21,8 +21,8 @@ namespace ob {
   // use concept over inheritance
   template <class B>
   concept BookLike = requires(B b, const NewOrder& o, OrderId id, Qty q, Price p, TradeBuf& tb) {
-    { b.add(o, tb) } -> std::same_as<void>;  // match + (maybe) rest remainder
-    { b.cancel(id) } -> std::same_as<bool>;  // false if unknown/already gone
+    { b.add(o, tb) } -> std::same_as<OrderId>;  // match + (maybe) rest remainder
+    { b.cancel(id) } -> std::same_as<bool>;     // false if unknown/already gone
     { b.modify(id, q, p, tb) } -> std::same_as<bool>;
     { b.bestBid() } -> std::same_as<Price>;  // kNoBid if empty
     { b.bestAsk() } -> std::same_as<Price>;  // kNoAsk if empty
