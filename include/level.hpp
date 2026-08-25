@@ -53,6 +53,8 @@ namespace ob {
       o->prev = nullptr;
       o->next = nullptr;
       --orderCount;
+
+      totalQty -= o->remaining;
     }
   };
 

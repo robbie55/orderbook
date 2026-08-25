@@ -10,7 +10,8 @@ namespace ob {
   class OrderPool {
    public:
     OrderPool()
-        : pool_(static_cast<std::byte*>(::operator new(kPoolSize, std::align_val_t{kAlignment}))), freeListHead_(reinterpret_cast<void*>(pool_)) {
+        : pool_(static_cast<std::byte*>(::operator new(kPoolSize, std::align_val_t{kAlignment}))),
+          freeListHead_(reinterpret_cast<void*>(pool_)) {
       static_assert(kBlockSize % kAlignment == 0, "block stride must preserve alignment");
 
       for (size_t i{}; i < BlockCount - 1; ++i) {
@@ -48,9 +49,14 @@ namespace ob {
     OrderPool(OrderPool&& other) = delete;
     OrderPool& operator=(OrderPool&& rhs) = delete;
 
-    std::int64_t getIndex(T* p) const { return static_cast<std::uint32_t>(reinterpret_cast<Node*>(p) - pool_); }
+    std::size_t getIndex(T* p) const {
+      auto slab{(reinterpret_cast<std::byte*>(p) - pool_)};
+      return static_cast<std::size_t>(slab);
+    }
 
-    T* at(std::int64_t index) const { return reinterpret_cast<T*>(pool_ + (index * kBlockSize)); }
+    // T* = pool_ + iBS
+    // (T* - pool_/BS) = i
+    T* at(std::size_t index) const { return reinterpret_cast<T*>(pool_ + (index * kBlockSize)); }
 
     T* allocate() {
       // if we try to allocate when we're empty, throw

@@ -21,12 +21,12 @@ namespace ob {
   // use concept over inheritance
   template <class B>
   concept BookLike = requires(B b, const NewOrder& o, OrderId id, Qty q, Price p, TradeBuf& tb) {
-    { b.submit(o, tb) } -> std::same_as<void>;  // match + (maybe) rest remainder
-    { b.cancel(id) } -> std::same_as<bool>;     // false if unknown/already gone
+    { b.add(o, tb) } -> std::same_as<void>;  // match + (maybe) rest remainder
+    { b.cancel(id) } -> std::same_as<bool>;  // false if unknown/already gone
     { b.modify(id, q, p, tb) } -> std::same_as<bool>;
-    { b.best_bid() } -> std::same_as<Price>;  // kNoBid if empty
-    { b.best_ask() } -> std::same_as<Price>;  // kNoAsk if empty
-    { b.qty_at(Side::kBuy, p) } -> std::same_as<Qty>;
+    { b.bestBid() } -> std::same_as<Price>;  // kNoBid if empty
+    { b.bestAsk() } -> std::same_as<Price>;  // kNoAsk if empty
+    { b.qtyAt(Side::kBuy, p) } -> std::same_as<Qty>;
   };
 
 }  // namespace ob
