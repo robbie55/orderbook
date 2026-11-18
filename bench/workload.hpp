@@ -16,6 +16,8 @@ namespace bench {
   inline constexpr ob::Price kMid{10000};
   inline constexpr ob::Price kMaxOffset{50};  // resting prices are mid -/+ [1..50]
   inline constexpr ob::Qty kMaxQty{100};
+  // ArrayBook pool size for every bench config; ReferenceBook reserves the same.
+  inline constexpr std::size_t kCap{16384};
 
   class Rng {
    public:
