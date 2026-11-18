@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <numeric>
 #include <stats.hpp>
+#include <timing.hpp>
 #include <vector>
 #include <workload.hpp>
 
@@ -81,4 +82,33 @@ TEST(Stats, PercentileNearestRank) {
 TEST(Stats, MedianOddEven) {
   EXPECT_DOUBLE_EQ(bench::median({3.0, 1.0, 2.0}), 2.0);
   EXPECT_DOUBLE_EQ(bench::median({4.0, 1.0, 3.0, 2.0}), 2.5);
+}
+
+TEST(Timing, BlocksTimeFullBlocksAndRunEveryOp) {
+  std::vector<std::size_t> called;
+  std::uint64_t clock{};
+  // Fake clock: each read advances 10 ns; each op advances 1 ns.
+  const auto now{[&clock] { return clock += 10; }};
+  const auto op{[&](std::size_t i) {
+    called.push_back(i);
+    clock += 1;
+  }};
+  std::vector<std::uint64_t> samples;
+  bench::timeBlocks(10, 4, op, now, samples);
+
+  std::vector<std::size_t> expect(10);
+  std::iota(expect.begin(), expect.end(), std::size_t{0});
+  EXPECT_EQ(called, expect);  // the partial block still runs, untimed
+  ASSERT_EQ(samples.size(), 2U);
+  EXPECT_EQ(samples[0], 14U);  // 4 ops + the closing read's 10
+  EXPECT_EQ(samples[1], 14U);
+}
+
+TEST(Timing, BlockLargerThanNYieldsNoSamples) {
+  std::size_t calls{};
+  std::uint64_t clock{};
+  std::vector<std::uint64_t> samples;
+  bench::timeBlocks(3, 64, [&](std::size_t) { ++calls; }, [&clock] { return ++clock; }, samples);
+  EXPECT_EQ(calls, 3U);
+  EXPECT_TRUE(samples.empty());
 }
