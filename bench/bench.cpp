@@ -6,12 +6,14 @@
 #include <cstdint>
 #include <cstdlib>
 #include <ctime>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 #include <reference_book.hpp>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "stats.hpp"
@@ -27,7 +29,7 @@ namespace {
   // Defeats dead-code elimination: every returned id and post-phase top of book lands here.
   volatile std::int64_t sink{};
 
-  enum class Mode : std::uint8_t { kBatch, kBlock, kTimerFloor };
+  enum class Mode : std::uint8_t { kBatch, kBlock, kTimerFloor, kMixed };
 
   struct Config {
     Mode mode{Mode::kBatch};
@@ -35,6 +37,8 @@ namespace {
     std::size_t trials{31};
     std::uint64_t seed{42};
     std::size_t block{64};
+    bench::Mix mix{.add = 33, .modifyPx = 33, .cancel = 34};
+    std::size_t ops{30000};
     unsigned run{1};
     std::string commit{"unknown"};
     std::string machine{"unknown"};
@@ -71,6 +75,7 @@ namespace {
   void emit(const Config& cfg, const std::vector<Row>& rows) {
     const std::string date{today()};
     const std::string cc{compiler()};
+    std::cout << std::setprecision(10);
     for (const auto& r : rows) {
       std::cout << date << ',' << cfg.machine << ',' << cc << ',' << cfg.commit << ',' << cfg.run
                 << ',' << r.book << ',' << r.op << ',' << r.stat << ',' << r.value << ',' << r.unit
@@ -263,6 +268,81 @@ namespace {
     return rows;
   }
 
+  // ---- mixed: steady-state interleaved stream, one steady_clock pair over all ops ----
+
+  template <class Book>
+  double mixedTrial(Book& book, const bench::MixedStream& s, std::vector<ob::OrderId>& ids) {
+    for (std::size_t i{}; i < s.preload.size(); ++i) {
+      ids[i] = book.add(s.preload[i]);
+    }
+    std::int64_t idSum{};
+    const std::uint64_t t0{nowNs()};
+    for (const bench::Op& op : s.ops) {
+      switch (op.kind) {
+        case bench::OpKind::kAdd:
+          ids[op.handle] = book.add(op.order);
+          idSum += ids[op.handle];
+          break;
+        case bench::OpKind::kModifyPx:
+          book.modify(ids[op.handle], op.px, op.qty);
+          break;
+        case bench::OpKind::kCancel:
+          book.cancel(ids[op.handle]);
+          break;
+      }
+    }
+    const std::uint64_t t1{nowNs()};
+    sink = sink + idSum;
+    foldTop(book);
+    return static_cast<double>(s.ops.size()) * 1e9 / static_cast<double>(t1 - t0);
+  }
+
+  std::vector<Row> runMixed(const Config& cfg) {
+    const bench::MixedStream s{bench::makeMixed(cfg.seed, cfg.n, cfg.ops, cfg.mix, kCap)};
+    std::vector<ob::OrderId> ids(cfg.n + cfg.ops);  // one slot per handle ever issued
+    std::vector<double> arr;
+    std::vector<double> ref;
+    arr.reserve(cfg.trials);
+    ref.reserve(cfg.trials);
+
+    // Same discipline as batch: fresh books, untimed preload, warmup trial 0, interleaved.
+    for (std::size_t t{}; t <= cfg.trials; ++t) {
+      auto a{freshArray()};
+      const double pa{mixedTrial(*a, s, ids)};
+      auto r{freshRef()};
+      const double pr{mixedTrial(*r, s, ids)};
+      if (t == 0) {
+        continue;
+      }
+      arr.push_back(pa);
+      ref.push_back(pr);
+    }
+
+    std::vector<Row> rows;
+    for (const auto& [book, xs] : {std::pair{"array", &arr}, std::pair{"ref", &ref}}) {
+      const auto [lo, hi]{std::minmax_element(xs->begin(), xs->end())};
+      rows.push_back({book, "mixed", "median", bench::median(*xs), "ops/s", "mixed", ""});
+      rows.push_back({book, "mixed", "min", *lo, "ops/s", "mixed", ""});
+      rows.push_back({book, "mixed", "max", *hi, "ops/s", "mixed", ""});
+    }
+    rows.push_back(
+        {"ratio", "mixed", "median", bench::median(arr) / bench::median(ref), "x", "mixed", ""});
+
+    std::array<std::size_t, 3> realised{};
+    for (const bench::Op& op : s.ops) {
+      ++realised[static_cast<std::size_t>(op.kind)];
+    }
+    const std::array<std::pair<const char*, unsigned>, 3> kinds{
+        {{"add", cfg.mix.add}, {"modify_px", cfg.mix.modifyPx}, {"cancel", cfg.mix.cancel}}};
+    for (std::size_t k{}; k < kinds.size(); ++k) {
+      rows.push_back({"workload", kinds[k].first, "requested_pct",
+                      static_cast<double>(kinds[k].second), "%", "mixed", ""});
+      rows.push_back({"workload", kinds[k].first, "realised_count",
+                      static_cast<double>(realised[k]), "ops", "mixed", ""});
+    }
+    return rows;
+  }
+
   // ---- timer floor: cost and resolution of steady_clock::now() ----
 
   std::vector<Row> runTimerFloor() {
@@ -289,7 +369,8 @@ namespace {
 
   [[noreturn]] void usage(const std::string& why) {
     std::cerr << "ob_bench: " << why << "\n"
-              << "usage: ob_bench [--header] [--per-op [--block K] | --timer-floor]\n"
+              << "usage: ob_bench [--header] [--per-op [--block K] | --timer-floor |\n"
+              << "                 --mix ADD,MODPX,CANCEL [--ops OPS]]\n"
               << "                [--n N] [--trials T] [--seed S] [--run R]\n"
               << "                [--commit SHA] [--machine LABEL]\n"
               << "Prints CSV rows to stdout (--header prints the header line only).\n";
@@ -307,6 +388,21 @@ namespace {
     } catch (const std::exception&) {
       usage("not a number: " + s);
     }
+  }
+
+  bench::Mix parseMix(const std::string& v) {
+    const auto c1{v.find(',')};
+    const auto c2{c1 == std::string::npos ? c1 : v.find(',', c1 + 1)};
+    if (c2 == std::string::npos) {
+      usage("--mix wants ADD,MODPX,CANCEL percents");
+    }
+    const bench::Mix m{.add = static_cast<unsigned>(toU64(v.substr(0, c1))),
+                       .modifyPx = static_cast<unsigned>(toU64(v.substr(c1 + 1, c2 - c1 - 1))),
+                       .cancel = static_cast<unsigned>(toU64(v.substr(c2 + 1)))};
+    if (m.add + m.modifyPx + m.cancel != 100) {
+      usage("--mix percents must sum to 100");
+    }
+    return m;
   }
 
   Config parse(int argc, char** argv, bool& headerOnly) {
@@ -336,6 +432,11 @@ namespace {
         cfg.trials = static_cast<std::size_t>(toU64(v));
       } else if (a == "--seed") {
         cfg.seed = toU64(v);
+      } else if (a == "--mix") {
+        cfg.mode = Mode::kMixed;
+        cfg.mix = parseMix(v);
+      } else if (a == "--ops") {
+        cfg.ops = static_cast<std::size_t>(toU64(v));
       } else if (a == "--block") {
         cfg.block = static_cast<std::size_t>(toU64(v));
       } else if (a == "--run") {
@@ -374,6 +475,9 @@ int main(int argc, char** argv) {
       break;
     case Mode::kBlock:
       emit(cfg, runBlock(cfg));
+      break;
+    case Mode::kMixed:
+      emit(cfg, runMixed(cfg));
       break;
     case Mode::kTimerFloor:
       emit(cfg, runTimerFloor());

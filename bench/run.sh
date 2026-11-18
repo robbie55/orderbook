@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds release, runs ob_bench 3x in one mode, appends CSV rows to
-# bench/results/<date>-<machine>.csv. Usage: bench/run.sh [batch|timer|block]
+# bench/results/<date>-<machine>.csv. Usage: bench/run.sh [batch|timer|block|mixed]
 # (timer runs once: it measures the clock, not the books.)
 # MACHINE=<label> overrides the machine label (default m1pro).
 set -euo pipefail
@@ -13,6 +13,7 @@ case "$mode" in
   batch) args=(--n 10000 --trials 31 --seed 42) ;;
   timer) args=(--timer-floor) ;;
   block) args=(--per-op --block 64 --n 10000 --trials 31 --seed 42) ;;
+  mixed) args=(--mix 33,33,34 --n 10000 --ops 30000 --trials 31 --seed 42) ;;
   *) echo "run.sh: unknown mode '$mode'" >&2; exit 2 ;;
 esac
 
