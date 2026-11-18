@@ -11,6 +11,8 @@ by Robbie.
 
 ```sh
 bench/run.sh batch   # appends 3 runs to bench/results/<date>-m1pro.csv
+bench/run.sh timer   # 1 run: steady_clock cost + resolution
+bench/run.sh block   # 3 runs: p50/p99/p99.9 per op from 64-op blocks
 ```
 
 `run.sh` refuses to run with uncommitted changes in `src/ include/ bench/`, stamps each row
@@ -19,7 +21,7 @@ with `git rev-parse --short HEAD`, and writes `<date>-<machine>.env` (CPU, OS, c
 ## Machine
 
 Apple M1 Pro, macOS 26.7.1, Apple clang 21.0.0 (clang-2100.3.34.2), Release preset
-(`-O3`, no `-march`), on AC power. No core pinning: macOS has no user-space affinity API.
+(`-O3 -DNDEBUG`, no `-march`). Runs taken on AC power with other apps closed. No core pinning: macOS has no user-space affinity API.
 
 ## Workload
 
@@ -56,6 +58,30 @@ Per trial, each book runs four phases over the same workload, each timed as one
   `volatile` sink, printed to stderr.
 - Timer: `steady_clock` ticks at 41.67 ns on this machine (`mach_timebase_info` 125/3);
   batches of 10000 ops make that error < 0.01 ns/op.
+
+## Method: timer floor (`method=timer`)
+
+10^6 back-to-back `steady_clock::now()` pairs: `mean_read` = loop wall / 2*10^6,
+`resolution` = smallest nonzero delta. Not subtracted from results. Each 64-op block pays
+one read, i.e. about `mean_read` / 64 ns/op of overhead.
+
+## Method: block (`method=block`, `block=64`)
+
+`steady_clock` ticks at 41.67 ns, so a single ArrayBook op (a few ns) can't be resolved:
+timing one add gives p50 = 0. Instead, same workload and phases as batch, but each phase is
+timed in **blocks of K = 64 consecutive ops of one kind** (one `now()` pair per block); the
+trailing partial block runs untimed. Both books use the same K.
+
+- Reported values are percentiles (nearest rank) of per-block ns / 64, i.e.
+  "ns/op, per 64-op block". Quantization: +/-41.67 ns per block = +/-0.65 ns/op.
+- Samples pooled across the 31 timed trials (warmup discarded): n = 10000 gives 156
+  blocks/trial, ~4.8k samples per book x op; p99.9 rests on ~5 samples.
+- Tails include macOS scheduler noise (no pinning) and, for the map book, system malloc
+  (one `std::list` node + one `unordered_map` node per add, a `std::map` node per new
+  level).
+- Secondary, `method=block_coarse`, `block=1`: map book only, one op per `now()` pair.
+  Its ops span 1-3 timer ticks, so these values are coarse (multiples of ~41 ns). Not
+  emitted for ArrayBook: it can't be resolved per op.
 
 ## CSV columns
 
