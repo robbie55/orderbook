@@ -13,6 +13,7 @@ by Robbie.
 bench/run.sh batch   # appends 3 runs to bench/results/<date>-m1pro.csv
 bench/run.sh timer   # 1 run: steady_clock cost + resolution
 bench/run.sh block   # 3 runs: p50/p99/p99.9 per op from 64-op blocks
+bench/run.sh mixed   # 3 runs: orders/s on a steady-state mixed stream
 ```
 
 `run.sh` refuses to run with uncommitted changes in `src/ include/ bench/`, stamps each row
@@ -82,6 +83,24 @@ trailing partial block runs untimed. Both books use the same K.
 - Secondary, `method=block_coarse`, `block=1`: map book only, one op per `now()` pair.
   Its ops span 1-3 timer ticks, so these values are coarse (multiples of ~41 ns). Not
   emitted for ArrayBook: it can't be resolved per op.
+
+## Method: mixed (`method=mixed`)
+
+Steady-state throughput measured directly, not derived from per-op medians.
+
+- Preload n = 10000 resting orders (untimed), then 30000 interleaved ops on live handles,
+  timed as one `steady_clock` pair; ops/s = 30000 / elapsed.
+- Requested mix 33 / 33 / 34 % add / modify(px) / cancel. An add is forced when live
+  <= 0.95n and a cancel when live >= 1.05n, so the book stays ~10k orders (fixed cache
+  footprint). Requested percents and realised counts are both in the CSV
+  (`book=workload`).
+- Adds and price modifies are non-crossing and same-side, as in batch. Modify keeps qty.
+- Same fresh-book / interleave / warmup / 31-trial / sink discipline as batch;
+  `book=ratio` = ArrayBook median ops/s / ReferenceBook median ops/s.
+- Cross-check (fill in after runs): derived ops/s = 1e9 / sum(share_i x ns_i) using the
+  batch medians for add, modify_px, cancel and the realised shares. Direct and derived
+  should agree within ~20%; a larger gap needs a written explanation (interleaving defeats
+  the batch phases' locality and branch predictability).
 
 ## CSV columns
 
