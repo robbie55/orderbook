@@ -227,7 +227,7 @@ namespace {
       live_.pop_back();
     }
 
-    std::string where() const {
+    [[nodiscard]] std::string where() const {
       return "seed " + std::to_string(seed_) + " op " + std::to_string(op_);
     }
 

@@ -53,16 +53,13 @@ namespace {
   constexpr std::string_view kHeader{
       "date,machine,compiler,commit,run,book,op,stat,value,unit,n,trials,seed,method,block"};
 
+  // Local date, matching run.sh's `date +%F` file name.
   std::string today() {
     const std::time_t t{std::time(nullptr)};
-    std::tm utc{};
-#ifdef _WIN32
-    gmtime_s(&utc, &t);
-#else
-    gmtime_r(&t, &utc);
-#endif
+    std::tm local{};
+    localtime_r(&t, &local);
     std::string buf(11, '\0');
-    buf.resize(std::strftime(buf.data(), buf.size(), "%F", &utc));
+    buf.resize(std::strftime(buf.data(), buf.size(), "%F", &local));
     return buf;
   }
 
@@ -99,15 +96,15 @@ namespace {
   constexpr std::array<std::string_view, kPhases> kPhaseNames{"add", "modify_px", "modify_qty_down",
                                                               "cancel"};
 
-  // Runs the four phases on one fresh book. `time(phase, n, op)` must call op(0..n-1)
+  // Runs the four phases on one fresh book. `timePhase(phase, n, op)` must call op(0..n-1)
   // exactly once each, in order; it decides what gets timed.
   // Phases: add all -> modify px each -> modify qty-down each (qty-1 >= 1, in place) ->
   // cancel all in shuffled order.
   template <class Book, class Timer>
-  void runPhases(Book& book, const Workload& w, std::vector<ob::OrderId>& ids, Timer&& time) {
+  void runPhases(Book& book, const Workload& w, std::vector<ob::OrderId>& ids, Timer&& timePhase) {
     const std::size_t n{w.resting.size()};
 
-    time(0, n, [&](std::size_t i) { ids[i] = book.add(w.resting[i]); });
+    timePhase(0, n, [&](std::size_t i) { ids[i] = book.add(w.resting[i]); });
     std::int64_t idSum{};
     for (std::size_t i{}; i < n; ++i) {
       idSum += ids[i];
@@ -115,13 +112,14 @@ namespace {
     sink = sink + idSum;
     foldTop(book);
 
-    time(1, n, [&](std::size_t i) { book.modify(ids[i], w.modifyPx[i], w.resting[i].qty); });
+    timePhase(1, n, [&](std::size_t i) { book.modify(ids[i], w.modifyPx[i], w.resting[i].qty); });
     foldTop(book);
 
-    time(2, n, [&](std::size_t i) { book.modify(ids[i], w.modifyPx[i], w.resting[i].qty - 1); });
+    timePhase(2, n,
+              [&](std::size_t i) { book.modify(ids[i], w.modifyPx[i], w.resting[i].qty - 1); });
     foldTop(book);
 
-    time(3, n, [&](std::size_t i) { book.cancel(ids[w.cancelOrder[i]]); });
+    timePhase(3, n, [&](std::size_t i) { book.cancel(ids[w.cancelOrder[i]]); });
     foldTop(book);
   }
 
@@ -202,7 +200,7 @@ namespace {
   void blockTrial(Book& book, const Workload& w, std::vector<ob::OrderId>& ids, std::size_t k,
                   PhaseSamples& out) {
     runPhases(book, w, ids, [&out, k](std::size_t phase, std::size_t n, auto&& op) {
-      bench::timeBlocks(n, k, op, nowNs, out[phase]);
+      bench::timeBlocks(n, k, op, [] { return nowNs(); }, out[phase]);
     });
   }
 

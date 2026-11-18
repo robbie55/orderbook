@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <numeric>
 #include <stats.hpp>
@@ -127,7 +128,7 @@ namespace {
     std::size_t live{};
     std::size_t minLive{SIZE_MAX};
     std::size_t maxLive{};
-    std::size_t counts[3]{};
+    std::array<std::size_t, 3> counts{};
 
     explicit Replay(const bench::MixedStream& s) : alive(s.preload.size(), true), state(s.preload) {
       live = s.preload.size();
@@ -212,7 +213,7 @@ TEST(Mixed, LiveCountRespectsCap) {
 
 TEST(Mixed, RealisedMixWithinTwoPoints) {
   const Replay r{bench::makeMixed(9, kMixN, kMixOps, kMix, bench::kCap)};
-  const unsigned want[3]{kMix.add, kMix.modifyPx, kMix.cancel};
+  const std::array<unsigned, 3> want{kMix.add, kMix.modifyPx, kMix.cancel};
   for (std::size_t k{}; k < 3; ++k) {
     const double pct{100.0 * static_cast<double>(r.counts[k]) / static_cast<double>(kMixOps)};
     EXPECT_NEAR(pct, want[k], 2.0) << "kind " << k;
