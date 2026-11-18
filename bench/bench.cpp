@@ -239,15 +239,17 @@ namespace {
     PhaseSamples arr{reserved((cfg.trials + 1) * (cfg.n / k))};
     PhaseSamples ref{reserved((cfg.trials + 1) * (cfg.n / k))};
     // Secondary: map book at k = 1. Its ops span only 1-3 timer ticks, so this is coarse.
-    PhaseSamples refSingle{reserved((cfg.trials + 1) * cfg.n)};
+    PhaseSamples refSingle{reserved(k != 1 ? (cfg.trials + 1) * cfg.n : 0)};
 
     for (std::size_t t{}; t <= cfg.trials; ++t) {
       auto a{freshArray()};
       blockTrial(*a, w, ids, k, arr);
       auto r{freshRef()};
       blockTrial(*r, w, ids, k, ref);
-      auto r1{freshRef()};
-      blockTrial(*r1, w, ids, 1, refSingle);
+      if (k != 1) {
+        auto r1{freshRef()};
+        blockTrial(*r1, w, ids, 1, refSingle);
+      }
       if (t == 0) {
         for (auto* s : {&arr, &ref, &refSingle}) {
           for (auto& v : *s) {
