@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <array>
 #include <array_book.hpp>
 #include <chrono>
 #include <cstddef>
@@ -13,6 +15,7 @@
 #include <vector>
 
 #include "stats.hpp"
+#include "timing.hpp"
 #include "types.hpp"
 #include "workload.hpp"
 
@@ -24,10 +27,14 @@ namespace {
   // Defeats dead-code elimination: every returned id and post-phase top of book lands here.
   volatile std::int64_t sink{};
 
+  enum class Mode : std::uint8_t { kBatch, kBlock, kTimerFloor };
+
   struct Config {
+    Mode mode{Mode::kBatch};
     std::size_t n{10000};
     std::size_t trials{31};
     std::uint64_t seed{42};
+    std::size_t block{64};
     unsigned run{1};
     std::string commit{"unknown"};
     std::string machine{"unknown"};
@@ -57,11 +64,7 @@ namespace {
 
   std::string compiler() {
     std::string v{__VERSION__};
-    for (auto& c : v) {
-      if (c == ',') {
-        c = ';';
-      }
-    }
+    std::replace(v.begin(), v.end(), ',', ';');
     return v;
   }
 
@@ -76,10 +79,10 @@ namespace {
     }
   }
 
-  double nsPerOp(Clock::time_point t0, Clock::time_point t1, std::size_t n) {
-    return static_cast<double>(
-               std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count()) /
-           static_cast<double>(n);
+  std::uint64_t nowNs() {
+    return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch())
+            .count());
   }
 
   template <class Book>
@@ -87,58 +90,34 @@ namespace {
     sink = sink + book.bestBid() + book.bestAsk();
   }
 
-  // ---- batch mode: one steady_clock pair per phase, ns/op = phase time / n ----
-
   constexpr std::size_t kPhases{4};
-  constexpr std::string_view kPhaseNames[kPhases]{"add", "modify_px", "modify_qty_down", "cancel"};
+  constexpr std::array<std::string_view, kPhases> kPhaseNames{"add", "modify_px", "modify_qty_down",
+                                                              "cancel"};
 
-  struct PhaseNs {
-    double v[kPhases];
-  };
-
-  template <class Book>
-  PhaseNs runTrial(Book& book, const Workload& w, std::vector<ob::OrderId>& ids) {
+  // Runs the four phases on one fresh book. `time(phase, n, op)` must call op(0..n-1)
+  // exactly once each, in order; it decides what gets timed.
+  // Phases: add all -> modify px each -> modify qty-down each (qty-1 >= 1, in place) ->
+  // cancel all in shuffled order.
+  template <class Book, class Timer>
+  void runPhases(Book& book, const Workload& w, std::vector<ob::OrderId>& ids, Timer&& time) {
     const std::size_t n{w.resting.size()};
-    PhaseNs out{};
+
+    time(0, n, [&](std::size_t i) { ids[i] = book.add(w.resting[i]); });
     std::int64_t idSum{};
-
-    auto t0{Clock::now()};
     for (std::size_t i{}; i < n; ++i) {
-      ids[i] = book.add(w.resting[i]);
+      idSum += ids[i];
     }
-    auto t1{Clock::now()};
-    out.v[0] = nsPerOp(t0, t1, n);
-    for (const auto id : ids) {
-      idSum += id;
-    }
-    foldTop(book);
-
-    t0 = Clock::now();
-    for (std::size_t i{}; i < n; ++i) {
-      book.modify(ids[i], w.modifyPx[i], w.resting[i].qty);
-    }
-    t1 = Clock::now();
-    out.v[1] = nsPerOp(t0, t1, n);
-    foldTop(book);
-
-    t0 = Clock::now();
-    for (std::size_t i{}; i < n; ++i) {
-      book.modify(ids[i], w.modifyPx[i], w.resting[i].qty - 1);
-    }
-    t1 = Clock::now();
-    out.v[2] = nsPerOp(t0, t1, n);
-    foldTop(book);
-
-    t0 = Clock::now();
-    for (const std::size_t h : w.cancelOrder) {
-      book.cancel(ids[h]);
-    }
-    t1 = Clock::now();
-    out.v[3] = nsPerOp(t0, t1, n);
-    foldTop(book);
-
     sink = sink + idSum;
-    return out;
+    foldTop(book);
+
+    time(1, n, [&](std::size_t i) { book.modify(ids[i], w.modifyPx[i], w.resting[i].qty); });
+    foldTop(book);
+
+    time(2, n, [&](std::size_t i) { book.modify(ids[i], w.modifyPx[i], w.resting[i].qty - 1); });
+    foldTop(book);
+
+    time(3, n, [&](std::size_t i) { book.cancel(ids[w.cancelOrder[i]]); });
+    foldTop(book);
   }
 
   std::unique_ptr<ArrayBook<kCap>> freshArray() {
@@ -146,24 +125,37 @@ namespace {
   }
   std::unique_ptr<ReferenceBook> freshRef() { return std::make_unique<ReferenceBook>(kCap); }
 
+  // ---- batch: one steady_clock pair per phase, ns/op = phase time / n ----
+
+  using PhaseNs = std::array<double, kPhases>;
+
+  template <class Book>
+  PhaseNs batchTrial(Book& book, const Workload& w, std::vector<ob::OrderId>& ids) {
+    PhaseNs out{};
+    runPhases(book, w, ids, [&out](std::size_t phase, std::size_t n, auto&& op) {
+      const std::uint64_t t0{nowNs()};
+      for (std::size_t i{}; i < n; ++i) {
+        op(i);
+      }
+      const std::uint64_t t1{nowNs()};
+      out[phase] = static_cast<double>(t1 - t0) / static_cast<double>(n);
+    });
+    return out;
+  }
+
   void addSummary(std::vector<Row>& rows, const std::string& book, std::string_view op,
-                  const std::vector<double>& xs, const std::string& method) {
-    double lo{xs.front()};
-    double hi{xs.front()};
-    for (const double x : xs) {
-      lo = x < lo ? x : lo;
-      hi = x > hi ? x : hi;
-    }
-    rows.push_back({book, std::string{op}, "median", bench::median(xs), "ns/op", method, ""});
-    rows.push_back({book, std::string{op}, "min", lo, "ns/op", method, ""});
-    rows.push_back({book, std::string{op}, "max", hi, "ns/op", method, ""});
+                  const std::vector<double>& xs) {
+    const auto [lo, hi]{std::minmax_element(xs.begin(), xs.end())};
+    rows.push_back({book, std::string{op}, "median", bench::median(xs), "ns/op", "batch", ""});
+    rows.push_back({book, std::string{op}, "min", *lo, "ns/op", "batch", ""});
+    rows.push_back({book, std::string{op}, "max", *hi, "ns/op", "batch", ""});
   }
 
   std::vector<Row> runBatch(const Config& cfg) {
     const Workload w{bench::makeWorkload(cfg.seed, cfg.n)};
     std::vector<ob::OrderId> ids(cfg.n);
-    std::vector<double> arr[kPhases];
-    std::vector<double> ref[kPhases];
+    std::array<std::vector<double>, kPhases> arr;
+    std::array<std::vector<double>, kPhases> ref;
     for (std::size_t p{}; p < kPhases; ++p) {
       arr[p].reserve(cfg.trials);
       ref[p].reserve(cfg.trials);
@@ -173,33 +165,132 @@ namespace {
     // Books interleave A,R,A,R so drift (thermal, background load) hits both equally.
     for (std::size_t t{}; t <= cfg.trials; ++t) {
       auto a{freshArray()};
-      const PhaseNs pa{runTrial(*a, w, ids)};
+      const PhaseNs pa{batchTrial(*a, w, ids)};
       auto r{freshRef()};
-      const PhaseNs pr{runTrial(*r, w, ids)};
+      const PhaseNs pr{batchTrial(*r, w, ids)};
       if (t == 0) {
         continue;
       }
       for (std::size_t p{}; p < kPhases; ++p) {
-        arr[p].push_back(pa.v[p]);
-        ref[p].push_back(pr.v[p]);
+        arr[p].push_back(pa[p]);
+        ref[p].push_back(pr[p]);
       }
     }
 
     std::vector<Row> rows;
     for (std::size_t p{}; p < kPhases; ++p) {
-      addSummary(rows, "array", kPhaseNames[p], arr[p], "batch");
-      addSummary(rows, "ref", kPhaseNames[p], ref[p], "batch");
+      addSummary(rows, "array", kPhaseNames[p], arr[p]);
+      addSummary(rows, "ref", kPhaseNames[p], ref[p]);
       rows.push_back({"ratio", std::string{kPhaseNames[p]}, "median",
                       bench::median(ref[p]) / bench::median(arr[p]), "x", "batch", ""});
     }
     return rows;
   }
 
+  // ---- block: one steady_clock pair per k consecutive ops of one kind ----
+  // The timer ticks at 41.67 ns on Apple silicon, too coarse for single ArrayBook ops, so
+  // tails are percentiles of per-block ns / k.
+
+  using PhaseSamples = std::array<std::vector<std::uint64_t>, kPhases>;
+
+  template <class Book>
+  void blockTrial(Book& book, const Workload& w, std::vector<ob::OrderId>& ids, std::size_t k,
+                  PhaseSamples& out) {
+    runPhases(book, w, ids, [&out, k](std::size_t phase, std::size_t n, auto&& op) {
+      bench::timeBlocks(n, k, op, nowNs, out[phase]);
+    });
+  }
+
+  PhaseSamples reserved(std::size_t perPhase) {
+    PhaseSamples s;
+    for (auto& v : s) {
+      v.reserve(perPhase);
+    }
+    return s;
+  }
+
+  void addTails(std::vector<Row>& rows, const std::string& book, PhaseSamples& s, std::size_t k,
+                const std::string& method) {
+    const std::string block{std::to_string(k)};
+    const auto perOp{
+        [k](std::uint64_t ns) { return static_cast<double>(ns) / static_cast<double>(k); }};
+    for (std::size_t p{}; p < kPhases; ++p) {
+      std::sort(s[p].begin(), s[p].end());
+      const std::string op{kPhaseNames[p]};
+      rows.push_back(
+          {book, op, "p50", perOp(bench::percentile(s[p], 50.0)), "ns/op", method, block});
+      rows.push_back(
+          {book, op, "p99", perOp(bench::percentile(s[p], 99.0)), "ns/op", method, block});
+      rows.push_back(
+          {book, op, "p99.9", perOp(bench::percentile(s[p], 99.9)), "ns/op", method, block});
+      rows.push_back(
+          {book, op, "samples", static_cast<double>(s[p].size()), "blocks", method, block});
+    }
+  }
+
+  std::vector<Row> runBlock(const Config& cfg) {
+    const Workload w{bench::makeWorkload(cfg.seed, cfg.n)};
+    std::vector<ob::OrderId> ids(cfg.n);
+    const std::size_t k{cfg.block};
+    // Sized for warmup + timed trials so no push_back reallocates mid-run.
+    PhaseSamples arr{reserved((cfg.trials + 1) * (cfg.n / k))};
+    PhaseSamples ref{reserved((cfg.trials + 1) * (cfg.n / k))};
+    // Secondary: map book at k = 1. Its ops span only 1-3 timer ticks, so this is coarse.
+    PhaseSamples refSingle{reserved((cfg.trials + 1) * cfg.n)};
+
+    for (std::size_t t{}; t <= cfg.trials; ++t) {
+      auto a{freshArray()};
+      blockTrial(*a, w, ids, k, arr);
+      auto r{freshRef()};
+      blockTrial(*r, w, ids, k, ref);
+      auto r1{freshRef()};
+      blockTrial(*r1, w, ids, 1, refSingle);
+      if (t == 0) {
+        for (auto* s : {&arr, &ref, &refSingle}) {
+          for (auto& v : *s) {
+            v.clear();
+          }
+        }
+      }
+    }
+
+    std::vector<Row> rows;
+    addTails(rows, "array", arr, k, "block");
+    addTails(rows, "ref", ref, k, "block");
+    if (k != 1) {
+      addTails(rows, "ref", refSingle, 1, "block_coarse");
+    }
+    return rows;
+  }
+
+  // ---- timer floor: cost and resolution of steady_clock::now() ----
+
+  std::vector<Row> runTimerFloor() {
+    constexpr std::size_t kPairs{1'000'000};
+    std::uint64_t minDelta{UINT64_MAX};
+    const std::uint64_t start{nowNs()};
+    for (std::size_t i{}; i < kPairs; ++i) {
+      const std::uint64_t a{nowNs()};
+      const std::uint64_t b{nowNs()};
+      if (b > a && b - a < minDelta) {
+        minDelta = b - a;
+      }
+    }
+    const std::uint64_t end{nowNs()};
+    const double perRead{static_cast<double>(end - start) / static_cast<double>(2 * kPairs)};
+    return {
+        {"timer", "steady_clock_now", "mean_read", perRead, "ns", "timer", ""},
+        {"timer", "steady_clock_now", "resolution", static_cast<double>(minDelta), "ns", "timer",
+         ""},
+    };
+  }
+
   // ---- CLI ----
 
   [[noreturn]] void usage(const std::string& why) {
     std::cerr << "ob_bench: " << why << "\n"
-              << "usage: ob_bench [--header] [--n N] [--trials T] [--seed S] [--run R]\n"
+              << "usage: ob_bench [--header] [--per-op [--block K] | --timer-floor]\n"
+              << "                [--n N] [--trials T] [--seed S] [--run R]\n"
               << "                [--commit SHA] [--machine LABEL]\n"
               << "Prints CSV rows to stdout (--header prints the header line only).\n";
     std::exit(2);
@@ -227,6 +318,14 @@ namespace {
         headerOnly = true;
         continue;
       }
+      if (a == "--per-op") {
+        cfg.mode = Mode::kBlock;
+        continue;
+      }
+      if (a == "--timer-floor") {
+        cfg.mode = Mode::kTimerFloor;
+        continue;
+      }
       if (i + 1 >= args.size()) {
         usage("missing value or unknown flag: " + a);
       }
@@ -237,6 +336,8 @@ namespace {
         cfg.trials = static_cast<std::size_t>(toU64(v));
       } else if (a == "--seed") {
         cfg.seed = toU64(v);
+      } else if (a == "--block") {
+        cfg.block = static_cast<std::size_t>(toU64(v));
       } else if (a == "--run") {
         cfg.run = static_cast<unsigned>(toU64(v));
       } else if (a == "--commit") {
@@ -253,6 +354,9 @@ namespace {
     if (cfg.trials == 0) {
       usage("--trials must be >= 1");
     }
+    if (cfg.block == 0 || cfg.block > cfg.n) {
+      usage("--block must be in 1..n");
+    }
     return cfg;
   }
 }  // namespace
@@ -264,7 +368,17 @@ int main(int argc, char** argv) {
     std::cout << kHeader << '\n';
     return 0;
   }
-  emit(cfg, runBatch(cfg));
+  switch (cfg.mode) {
+    case Mode::kBatch:
+      emit(cfg, runBatch(cfg));
+      break;
+    case Mode::kBlock:
+      emit(cfg, runBlock(cfg));
+      break;
+    case Mode::kTimerFloor:
+      emit(cfg, runTimerFloor());
+      break;
+  }
   std::cerr << "sink " << sink << '\n';
   return 0;
 }

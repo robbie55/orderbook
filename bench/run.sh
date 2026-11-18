@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Builds release, runs ob_bench 3x in one mode, appends CSV rows to
-# bench/results/<date>-<machine>.csv. Usage: bench/run.sh [batch]
+# bench/results/<date>-<machine>.csv. Usage: bench/run.sh [batch|timer|block]
+# (timer runs once: it measures the clock, not the books.)
 # MACHINE=<label> overrides the machine label (default m1pro).
 set -euo pipefail
 
@@ -10,6 +11,8 @@ machine="${MACHINE:-m1pro}"
 
 case "$mode" in
   batch) args=(--n 10000 --trials 31 --seed 42) ;;
+  timer) args=(--timer-floor) ;;
+  block) args=(--per-op --block 64 --n 10000 --trials 31 --seed 42) ;;
   *) echo "run.sh: unknown mode '$mode'" >&2; exit 2 ;;
 esac
 
@@ -41,7 +44,9 @@ if [[ ! -f "$env_file" ]]; then
   } > "$env_file"
 fi
 
-for run in 1 2 3; do
+runs=(1 2 3)
+[[ "$mode" == timer ]] && runs=(1)
+for run in "${runs[@]}"; do
   ./build/release/bench/ob_bench "${args[@]}" --run "$run" --commit "$commit" --machine "$machine" >> "$out"
 done
 echo "run.sh: $mode x3 @ $commit -> $out" >&2
