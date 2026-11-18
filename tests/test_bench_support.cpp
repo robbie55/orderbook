@@ -112,3 +112,109 @@ TEST(Timing, BlockLargerThanNYieldsNoSamples) {
   EXPECT_EQ(calls, 3U);
   EXPECT_TRUE(samples.empty());
 }
+
+// ---- steady-state mixed stream ----
+
+namespace {
+  constexpr std::size_t kMixN{2000};
+  constexpr std::size_t kMixOps{20000};
+  constexpr bench::Mix kMix{.add = 33, .modifyPx = 33, .cancel = 34};
+
+  // Replays a stream's handle bookkeeping; fails on any op against a dead handle.
+  struct Replay {
+    std::vector<bool> alive;
+    std::vector<ob::NewOrder> state;
+    std::size_t live{};
+    std::size_t minLive{SIZE_MAX};
+    std::size_t maxLive{};
+    std::size_t counts[3]{};
+
+    explicit Replay(const bench::MixedStream& s) : alive(s.preload.size(), true), state(s.preload) {
+      live = s.preload.size();
+      for (const auto& op : s.ops) {
+        apply(op);
+        minLive = std::min(minLive, live);
+        maxLive = std::max(maxLive, live);
+        if (::testing::Test::HasFailure()) {
+          return;
+        }
+      }
+    }
+
+    void apply(const bench::Op& op) {
+      switch (op.kind) {
+        case bench::OpKind::kAdd:
+          ++counts[0];
+          ASSERT_EQ(op.handle, alive.size()) << "adds take the next fresh handle";
+          EXPECT_TRUE(restingOk(op.order));
+          alive.push_back(true);
+          state.push_back(op.order);
+          ++live;
+          break;
+        case bench::OpKind::kModifyPx: {
+          ++counts[1];
+          ASSERT_LT(op.handle, alive.size());
+          ASSERT_TRUE(alive[op.handle]) << "modify on dead handle";
+          ob::NewOrder& o{state[op.handle]};
+          EXPECT_NE(op.px, o.price);
+          EXPECT_EQ(op.qty, o.qty);
+          o.price = op.px;
+          EXPECT_TRUE(restingOk(o));
+          break;
+        }
+        case bench::OpKind::kCancel:
+          ++counts[2];
+          ASSERT_LT(op.handle, alive.size());
+          ASSERT_TRUE(alive[op.handle]) << "cancel on dead handle";
+          alive[op.handle] = false;
+          --live;
+          break;
+        default:
+          FAIL() << "unexpected op kind";
+      }
+    }
+  };
+}  // namespace
+
+TEST(Mixed, DeterministicPerSeed) {
+  const auto a{bench::makeMixed(5, kMixN, kMixOps, kMix, bench::kCap)};
+  const auto b{bench::makeMixed(5, kMixN, kMixOps, kMix, bench::kCap)};
+  const auto c{bench::makeMixed(6, kMixN, kMixOps, kMix, bench::kCap)};
+  ASSERT_EQ(a.ops.size(), kMixOps);
+  ASSERT_EQ(a.preload.size(), kMixN);
+  bool differs{false};
+  for (std::size_t i{}; i < kMixOps; ++i) {
+    EXPECT_EQ(a.ops[i].kind, b.ops[i].kind);
+    EXPECT_EQ(a.ops[i].handle, b.ops[i].handle);
+    EXPECT_EQ(a.ops[i].px, b.ops[i].px);
+    differs = differs || a.ops[i].handle != c.ops[i].handle;
+  }
+  EXPECT_TRUE(differs);
+}
+
+TEST(Mixed, NeverTouchesDeadHandleAndStaysInBounds) {
+  for (std::uint64_t seed{1}; seed <= 5; ++seed) {
+    const Replay r{bench::makeMixed(seed, kMixN, kMixOps, kMix, bench::kCap)};
+    EXPECT_EQ(r.counts[0] + r.counts[1] + r.counts[2], kMixOps);
+    EXPECT_GE(r.minLive, kMixN * 95 / 100);
+    EXPECT_LE(r.maxLive, kMixN * 105 / 100);
+  }
+}
+
+TEST(Mixed, LiveCountRespectsCap) {
+  // Add-heavy mix pushes against the upper bound; cap below 1.05n must win.
+  const bench::Mix addHeavy{.add = 80, .modifyPx = 10, .cancel = 10};
+  const Replay r{bench::makeMixed(3, kMixN, kMixOps, addHeavy, kMixN + 10)};
+  EXPECT_EQ(r.counts[0] + r.counts[1] + r.counts[2], kMixOps);
+  EXPECT_EQ(r.maxLive, kMixN + 10);
+  EXPECT_LE(r.maxLive, kMixN + 10);
+}
+
+TEST(Mixed, RealisedMixWithinTwoPoints) {
+  const Replay r{bench::makeMixed(9, kMixN, kMixOps, kMix, bench::kCap)};
+  const unsigned want[3]{kMix.add, kMix.modifyPx, kMix.cancel};
+  for (std::size_t k{}; k < 3; ++k) {
+    const double pct{100.0 * static_cast<double>(r.counts[k]) / static_cast<double>(kMixOps)};
+    EXPECT_NEAR(pct, want[k], 2.0) << "kind " << k;
+  }
+}

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <random>
@@ -88,5 +90,79 @@ namespace bench {
     w.modifyPx = makeModifyPrices(rng, w.resting);
     w.cancelOrder = makeCancelOrder(rng, n);
     return w;
+  }
+
+  enum class OpKind : std::uint8_t { kAdd, kModifyPx, kCancel };
+  // kAdd uses `order` and takes handle = next fresh index; kModifyPx uses px/qty.
+  struct Op {
+    OpKind kind;
+    std::size_t handle;
+    ob::NewOrder order;
+    ob::Price px;
+    ob::Qty qty;
+  };
+  struct Mix {
+    unsigned add, modifyPx, cancel;  // percent, sums to 100
+  };
+  struct MixedStream {
+    std::vector<ob::NewOrder> preload;  // handles 0..n-1
+    std::vector<Op> ops;
+  };
+
+  // Preload n resting orders, then `ops` interleaved ops on live handles. Kind is drawn by
+  // `mix`, except an add is forced when live <= 0.95n and a cancel when live >= min(1.05n,
+  // cap), so the resting set (and its cache footprint) stays ~n.
+  inline MixedStream makeMixed(std::uint64_t seed, std::size_t n, std::size_t ops, Mix mix,
+                               std::size_t cap) {
+    assert(mix.add + mix.modifyPx + mix.cancel == 100);
+    const std::size_t lo{(n * 95 + 99) / 100};
+    const std::size_t hi{std::min(n * 105 / 100, cap)};
+    assert(n >= lo && n <= hi);
+
+    Rng rng{seed};
+    MixedStream s;
+    s.preload = makeResting(rng, n);
+    std::vector<ob::NewOrder> state{s.preload};  // current side/price/qty per handle
+    std::vector<std::size_t> live(n);
+    for (std::size_t i{}; i < n; ++i) {
+      live[i] = i;
+    }
+
+    s.ops.reserve(ops);
+    for (std::size_t k{}; k < ops; ++k) {
+      const auto roll{rng.below(100)};
+      OpKind kind{roll < mix.add                  ? OpKind::kAdd
+                  : roll < mix.add + mix.modifyPx ? OpKind::kModifyPx
+                                                  : OpKind::kCancel};
+      if (kind == OpKind::kCancel && live.size() <= lo) {
+        kind = OpKind::kAdd;
+      } else if (kind == OpKind::kAdd && live.size() >= hi) {
+        kind = OpKind::kCancel;
+      }
+
+      Op op{.kind = kind, .handle = 0, .order = {}, .px = 0, .qty = 0};
+      if (kind == OpKind::kAdd) {
+        op.order.side = rng.side();
+        op.order.price = rng.price(op.order.side);
+        op.order.qty = rng.qty();
+        op.handle = state.size();
+        live.push_back(op.handle);
+        state.push_back(op.order);
+      } else {
+        const auto j{static_cast<std::size_t>(rng.below(live.size()))};
+        op.handle = live[j];
+        ob::NewOrder& o{state[op.handle]};
+        if (kind == OpKind::kModifyPx) {
+          o.price = rng.priceOtherThan(o.side, o.price);
+          op.px = o.price;
+          op.qty = o.qty;
+        } else {
+          live[j] = live.back();
+          live.pop_back();
+        }
+      }
+      s.ops.push_back(op);
+    }
+    return s;
   }
 }  // namespace bench
