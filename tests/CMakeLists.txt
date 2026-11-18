@@ -13,6 +13,7 @@ add_executable(ob_tests
     test_types.cpp
     test_order_pool.cpp
     test_array_book_core.cpp
+    test_reference_book.cpp
 )
 # `ob` carries our warnings-as-errors; GoogleTest's own headers are pulled in
 # as SYSTEM includes by the imported targets, so -Werror does not fire on them.
